@@ -1,0 +1,7 @@
+---
+# handlers file for ansible-role_prometheus_apache_exporter
+
+- name: Reload apache
+  ansible.builtin.service:
+    name: httpd
+    state: reloaded

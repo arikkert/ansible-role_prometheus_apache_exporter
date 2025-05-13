@@ -1,0 +1,108 @@
+---
+# tasks file for role-prometheus_apache_exporter
+#
+
+#
+# Install packages for each OS family
+#
+
+- name: Debian OS family
+  when: ansible_os_family == 'Debian'
+  block:
+    - name: Ensure packages are installed for Debian OS family
+      ansible.builtin.apt:
+        name:
+          - prometheus-apache-exporter
+
+- name: RedHat 8/9 block
+  when: ansible_os_family == 'RedHat' and (ansible_distribution_major_version | int) >= 8
+  block:
+    - name: Ensure EPEL packages can be installed for RedHat 8/9
+      ansible.builtin.dnf:
+        name:
+          - yum-utils
+    - name: Enable crb repository for RedHat 9
+      ansible.builtin.command: dnf config-manager --set-enabled crb
+      changed_when: false
+      when: ansible_distribution_major_version | int == 9
+    - name: Ensure EPEL repo is installed for RedHat 8/9
+      ansible.builtin.dnf:
+        name:
+          - epel-release
+    - name: Have the prometheus repo configured
+      become: true
+      ansible.builtin.yum_repository:
+        name: prometheus
+        description: prometheus
+        baseurl: https://packagecloud.io/prometheus-rpm/release/el/$releasever/$basearch
+        gpgcheck: true
+        gpgkey:
+          - https://packagecloud.io/prometheus-rpm/release/gpgkey
+          - https://raw.githubusercontent.com/lest/prometheus-rpm/master/RPM-GPG-KEY-prometheus-rpm
+    - name: Ensure packages are installed for RedHat 8/9
+      ansible.builtin.dnf:
+        name:
+          - apache_exporter
+
+#
+# Configure
+# RedHat all versions
+#
+
+- name: RedHat
+  when: ansible_os_family == 'RedHat'
+  block:
+    - name: Ensure status firewalld is registered
+      ansible.builtin.command: systemctl status firewalld
+      register: firewalld_status
+      changed_when: false
+      failed_when: false
+      check_mode: false
+    - name: Ensure when firewalld already running it is configured to allow apache_exporter to be exposed from the prometheus_ip
+      ansible.posix.firewalld:
+        state: enabled
+        rich_rule: 'rule family="ipv4" source address="{{ prometheus_ip }}" port port="{{ item }}" protocol="tcp" accept'
+        immediate: true
+        permanent: true
+      loop:
+        - 9117
+      when: firewalld_status.rc == 0 and prometheus_ip is defined
+    - name: Ensure when firewalld already running it is configured to allow apache_eporter to be exposed
+      ansible.posix.firewalld:
+        state: enabled
+        port: "{{ item }}"
+        immediate: true
+        permanent: true
+      loop:
+        - 9117/tcp
+      when: firewalld_status.rc == 0 and prometheus_ip is not defined
+
+    - name: Ensure Apache servers status
+      ansible.builtin.copy:
+        src: status.conf
+        dest: /etc/httpd/conf.d
+        mode: "0644"
+      notify: Reload apache
+
+# Configure
+# Debian
+#
+
+- name: Debian
+  when: ansible_os_family == 'Debian'
+  block:
+    - name: Ensure prometheus-apache-exporter is running
+      ansible.builtin.service:
+        name: prometheus-apache-exporter
+        state: started
+        enabled: true
+- name: RedHat
+  when: ansible_os_family == 'RedHat'
+  block:
+    - name: Ensure apache_exporter is running
+      ansible.builtin.service:
+        name: apache_exporter
+        state: started
+        enabled: true
+
+...
